@@ -84,6 +84,14 @@ class AutoReplyPauseManager:
 # 全局暂停管理器实例
 pause_manager = AutoReplyPauseManager()
 
+
+class TokenRefreshBlockedError(Exception):
+    """Token 刷新被风控或限流阻断。"""
+
+    def __init__(self, message: str, retry_after: int = 0):
+        super().__init__(message)
+        self.retry_after = retry_after
+
 # 日志配置
 log_dir = 'logs'
 os.makedirs(log_dir, exist_ok=True)
@@ -173,6 +181,8 @@ class XianyuLive:
         self.current_token = None
         self.token_refresh_task = None
         self.connection_restart_flag = False  # 连接重启标志
+        self.token_blocked_until = 0
+        self.token_block_reason = ""
 
         # 通知防重复机制
         self.last_notification_time = {}  # 记录每种通知类型的最后发送时间
@@ -194,6 +204,36 @@ class XianyuLive:
 
         # 启动定期清理过期暂停记录的任务
         self.cleanup_task = None
+
+    def _is_token_blocked_response(self, response_data) -> bool:
+        """检查 token 刷新结果是否被风控/验证码拦截。"""
+        try:
+            response_text = json.dumps(response_data, ensure_ascii=False)
+        except Exception:
+            response_text = self._safe_str(response_data)
+
+        block_markers = [
+            'FAIL_SYS_USER_VALIDATE',
+            'RGV587_ERROR',
+            'captcha',
+            'punish?x5secdata',
+            '哎哟喂,被挤爆啦',
+            '请稍后重试'
+        ]
+        response_text_lower = response_text.lower()
+        return any(marker.lower() in response_text_lower for marker in block_markers)
+
+    def _mark_token_blocked(self, reason: str, retry_after: int = None):
+        """标记 token 刷新被阻断，避免短时间内反复重试。"""
+        cooldown = retry_after if retry_after is not None else self.token_retry_interval
+        self.token_blocked_until = time.time() + max(60, cooldown)
+        self.token_block_reason = reason
+        retry_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.token_blocked_until))
+        logger.warning(f"【{self.cookie_id}】Token刷新进入冷却期，到期时间: {retry_time}，原因: {reason}")
+
+    def _get_token_block_remaining(self) -> int:
+        """获取 token 冷却剩余秒数。"""
+        return max(0, int(self.token_blocked_until - time.time()))
 
 
 
@@ -665,6 +705,13 @@ class XianyuLive:
     async def refresh_token(self):
         """刷新token"""
         try:
+            remaining = self._get_token_block_remaining()
+            if remaining > 0:
+                logger.warning(
+                    f"【{self.cookie_id}】Token刷新仍在冷却期，剩余 {remaining} 秒，原因: {self.token_block_reason or '未知'}"
+                )
+                return None
+
             logger.info(f"【{self.cookie_id}】开始刷新token...")
             params = {
                 'jsv': '2.7.2',
@@ -730,11 +777,15 @@ class XianyuLive:
                                 new_token = res_json['data']['accessToken']
                                 self.current_token = new_token
                                 self.last_token_refresh_time = time.time()
+                                self.token_blocked_until = 0
+                                self.token_block_reason = ""
 
                                 logger.info(f"【{self.cookie_id}】Token刷新成功")
                                 return new_token
 
                     logger.error(f"【{self.cookie_id}】Token刷新失败: {res_json}")
+                    if self._is_token_blocked_response(res_json):
+                        self._mark_token_blocked(f"Token刷新被风控拦截: {self._safe_str(res_json)}")
                     
                     # 发送Token刷新失败通知
                     await self.send_token_refresh_notification(f"Token刷新失败: {res_json}", "token_refresh_failed")
@@ -3047,10 +3098,11 @@ class XianyuLive:
                             await self.ws.close()
                         break
                     else:
-                        logger.error(f"【{self.cookie_id}】Token刷新失败，将在{self.token_retry_interval // 60}分钟后重试")
+                        retry_delay = max(self.token_retry_interval, self._get_token_block_remaining())
+                        logger.error(f"【{self.cookie_id}】Token刷新失败，将在{retry_delay // 60}分钟后重试")
                         # 发送Token刷新失败通知
                         await self.send_token_refresh_notification("Token定时刷新失败，将自动重试", "token_scheduled_refresh_failed")
-                        await asyncio.sleep(self.token_retry_interval)
+                        await asyncio.sleep(retry_delay)
                         continue
                 await asyncio.sleep(60)
             except Exception as e:
@@ -3129,6 +3181,13 @@ class XianyuLive:
     async def init(self, ws):
         # 如果没有token或者token过期，获取新token
         token_refresh_attempted = False
+        block_remaining = self._get_token_block_remaining()
+        if block_remaining > 0:
+            raise TokenRefreshBlockedError(
+                f"Token刷新冷却中，剩余 {block_remaining} 秒，原因: {self.token_block_reason or '未知'}",
+                retry_after=block_remaining
+            )
+
         if not self.current_token or (time.time() - self.last_token_refresh_time) >= self.token_refresh_interval:
             logger.info(f"【{self.cookie_id}】获取初始token...")
             token_refresh_attempted = True
@@ -3141,6 +3200,12 @@ class XianyuLive:
                 await self.send_token_refresh_notification("初始化时无法获取有效Token", "token_init_failed")
             else:
                 logger.info("由于刚刚尝试过token刷新，跳过重复的初始化失败通知")
+            block_remaining = self._get_token_block_remaining()
+            if block_remaining > 0:
+                raise TokenRefreshBlockedError(
+                    f"Token获取失败，冷却中，剩余 {block_remaining} 秒，原因: {self.token_block_reason or '未知'}",
+                    retry_after=block_remaining
+                )
             raise Exception("Token获取失败")
 
         msg = {
@@ -3942,6 +4007,16 @@ class XianyuLive:
                                 logger.error(f"处理消息出错: {self._safe_str(e)}")
                                 continue
 
+                except TokenRefreshBlockedError as e:
+                    logger.error(f"WebSocket连接因Token风控暂停: {self._safe_str(e)}")
+                    if self.heartbeat_task:
+                        self.heartbeat_task.cancel()
+                    if self.token_refresh_task:
+                        self.token_refresh_task.cancel()
+                    if self.cleanup_task:
+                        self.cleanup_task.cancel()
+                    await asyncio.sleep(max(60, e.retry_after or self.token_retry_interval))
+                    continue
                 except Exception as e:
                     logger.error(f"WebSocket连接异常: {self._safe_str(e)}")
                     if self.heartbeat_task:
