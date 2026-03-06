@@ -17,6 +17,7 @@ PROJECT_NAME="xianyu-auto-reply"
 COMPOSE_FILE="docker-compose.yml"
 DEFAULT_IMAGE="${APP_IMAGE:-antake/xianyu-auto-reply:latest}"
 DEFAULT_PLATFORMS="${DOCKER_PLATFORMS:-linux/amd64}"
+DOCKER_COMPOSE_CMD=""
 
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
@@ -32,6 +33,19 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}❌ $1${NC}"
+}
+
+run_compose() {
+    if [ -z "$DOCKER_COMPOSE_CMD" ]; then
+        print_error "Docker Compose 命令未初始化"
+        exit 1
+    fi
+
+    if [ "$DOCKER_COMPOSE_CMD" = "docker compose" ]; then
+        docker compose "$@"
+    else
+        docker-compose "$@"
+    fi
 }
 
 resolve_image_name() {
@@ -68,12 +82,16 @@ check_dependencies() {
         exit 1
     fi
 
-    if ! command -v docker-compose &> /dev/null; then
-        print_error "Docker Compose 未安装，请先安装 Docker Compose"
+    if docker compose version > /dev/null 2>&1; then
+        DOCKER_COMPOSE_CMD="docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    else
+        print_error "Docker Compose 未安装，请安装 docker compose 或 docker-compose"
         exit 1
     fi
 
-    print_success "系统依赖检查通过"
+    print_success "系统依赖检查通过，使用: $DOCKER_COMPOSE_CMD"
 }
 
 init_config() {
@@ -104,7 +122,7 @@ build_image() {
     local compose_file
     compose_file=$(select_compose_file "$iscn")
 
-    APP_IMAGE="$image_name" docker-compose -f "$compose_file" build --no-cache
+    APP_IMAGE="$image_name" run_compose -f "$compose_file" build --no-cache
     print_success "镜像构建完成"
 }
 
@@ -148,18 +166,18 @@ start_services() {
         print_info "启动基础服务，使用镜像: $image_name"
     fi
 
-    APP_IMAGE="$image_name" docker-compose $profile up -d --no-build
+    APP_IMAGE="$image_name" run_compose $profile up -d --no-build
     print_success "服务启动完成"
 
     print_info "等待服务就绪..."
     sleep 10
 
-    if APP_IMAGE="$image_name" docker-compose ps | grep -q "Up"; then
+    if APP_IMAGE="$image_name" run_compose ps | grep -q "Up"; then
         print_success "服务运行正常"
         show_access_info "$profile_arg"
     else
         print_error "服务启动失败"
-        APP_IMAGE="$image_name" docker-compose logs
+        APP_IMAGE="$image_name" run_compose logs
         exit 1
     fi
 }
@@ -169,37 +187,37 @@ pull_and_start() {
     image_name=$(resolve_image_name "$1")
 
     print_info "拉取镜像: $image_name"
-    APP_IMAGE="$image_name" docker-compose pull xianyu-app
+    APP_IMAGE="$image_name" run_compose pull xianyu-app
     start_services "$2" "$image_name"
 }
 
 stop_services() {
     print_info "停止服务..."
-    docker-compose down
+    run_compose down
     print_success "服务已停止"
 }
 
 restart_services() {
     print_info "重启服务..."
-    docker-compose restart
+    run_compose restart
     print_success "服务已重启"
 }
 
 show_logs() {
     local service="$1"
     if [ -z "$service" ]; then
-        docker-compose logs -f
+        run_compose logs -f
     else
-        docker-compose logs -f "$service"
+        run_compose logs -f "$service"
     fi
 }
 
 show_status() {
     print_info "服务状态:"
-    docker-compose ps
+    run_compose ps
 
     print_info "资源使用:"
-    docker stats --no-stream $(docker-compose ps -q)
+    docker stats --no-stream $(run_compose ps -q)
 }
 
 show_access_info() {
@@ -283,7 +301,7 @@ cleanup() {
 
     if [[ "$response" =~ ^[Yy]$ ]]; then
         print_info "清理环境..."
-        docker-compose down -v --rmi all
+        run_compose down -v --rmi all
         rm -rf data logs backups
         print_success "环境清理完成"
     else
