@@ -16,6 +16,7 @@ NC='\033[0m'
 PROJECT_NAME="xianyu-auto-reply"
 COMPOSE_FILE="docker-compose.yml"
 DEFAULT_IMAGE="${APP_IMAGE:-antake/xianyu-auto-reply:latest}"
+DEFAULT_PLATFORMS="${DOCKER_PLATFORMS:-linux/amd64}"
 
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
@@ -47,6 +48,15 @@ select_compose_file() {
         echo "docker-compose-cn.yml"
     else
         echo "$COMPOSE_FILE"
+    fi
+}
+
+select_dockerfile() {
+    local use_cn="$1"
+    if [[ "$use_cn" == "y" || "$use_cn" == "Y" ]]; then
+        echo "Dockerfile-cn"
+    else
+        echo "Dockerfile"
     fi
 }
 
@@ -101,10 +111,27 @@ build_image() {
 push_image() {
     local image_name
     image_name=$(resolve_image_name "$1")
+    local platforms="$DEFAULT_PLATFORMS"
 
-    build_image "$image_name"
-    print_info "推送镜像到 Docker Hub: $image_name"
-    docker push "$image_name"
+    if ! docker buildx version > /dev/null 2>&1; then
+        print_error "Docker Buildx 不可用，无法生成可供服务器拉取的多架构镜像"
+        exit 1
+    fi
+
+    print_info "准备推送镜像到 Docker Hub: $image_name"
+    echo "是否需要使用国内镜像(y/n): "
+    read -r iscn
+
+    local dockerfile
+    dockerfile=$(select_dockerfile "$iscn")
+
+    print_info "构建平台: $platforms"
+    docker buildx build \
+        --platform "$platforms" \
+        -t "$image_name" \
+        -f "$dockerfile" \
+        --push \
+        .
     print_success "镜像已推送: $image_name"
 }
 
@@ -268,6 +295,7 @@ show_help() {
     echo "闲鱼自动回复系统 Docker 部署脚本"
     echo ""
     echo "默认镜像: antake/xianyu-auto-reply:latest"
+    echo "默认推送平台: linux/amd64"
     echo ""
     echo "用法: $0 [命令] [参数]"
     echo ""
@@ -290,6 +318,7 @@ show_help() {
     echo "示例:"
     echo "  $0 push-image"
     echo "  $0 push-image antake/xianyu-auto-reply:1.0"
+    echo "  DOCKER_PLATFORMS=linux/amd64,linux/arm64 $0 push-image"
     echo "  $0 pull-start"
     echo "  $0 pull-start antake/xianyu-auto-reply:1.0"
     echo ""

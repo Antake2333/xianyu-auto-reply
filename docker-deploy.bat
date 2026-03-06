@@ -9,6 +9,7 @@ title 闲鱼自动回复系统 Docker 部署
 
 set "DEFAULT_IMAGE=antake/xianyu-auto-reply:latest"
 if "%APP_IMAGE%"=="" set "APP_IMAGE=%DEFAULT_IMAGE%"
+if "%DOCKER_PLATFORMS%"=="" set "DOCKER_PLATFORMS=linux/amd64"
 
 set "INFO_PREFIX=[INFO]"
 set "SUCCESS_PREFIX=[SUCCESS]"
@@ -80,8 +81,18 @@ goto end
 
 :push_image
 if not "%2"=="" set "APP_IMAGE=%2"
-call :build_image %APP_IMAGE%
-docker push %APP_IMAGE%
+docker buildx version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo %ERROR_PREFIX% Docker Buildx 不可用，无法生成 linux/amd64 镜像
+    pause
+    exit /b 1
+)
+echo %INFO_PREFIX% 准备推送镜像到 Docker Hub: %APP_IMAGE%
+set /p use_cn="是否使用国内镜像源？(y/n): "
+set "DOCKERFILE=Dockerfile"
+if /i "!use_cn!"=="y" set "DOCKERFILE=Dockerfile-cn"
+echo %INFO_PREFIX% 构建平台: %DOCKER_PLATFORMS%
+docker buildx build --platform %DOCKER_PLATFORMS% -t %APP_IMAGE% -f %DOCKERFILE% --push .
 if %errorlevel% neq 0 (
     echo %ERROR_PREFIX% 镜像推送失败
     pause
@@ -155,10 +166,12 @@ goto end
 echo 闲鱼自动回复系统 Docker 部署脚本
 echo.
 echo 默认镜像: antake/xianyu-auto-reply:latest
+echo 默认推送平台: linux/amd64
 echo.
 echo 用法:
 echo   docker-deploy.bat push-image
 echo   docker-deploy.bat push-image antake/xianyu-auto-reply:1.0
+echo   set DOCKER_PLATFORMS=linux/amd64,linux/arm64 ^&^& docker-deploy.bat push-image
 echo   docker-deploy.bat pull-start
 echo   docker-deploy.bat pull-start antake/xianyu-auto-reply:1.0
 echo.

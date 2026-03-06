@@ -167,10 +167,15 @@ xianyu-auto-reply/
 git clone https://github.com/zhinianboke/xianyu-auto-reply.git
 cd xianyu-auto-reply
 docker login
+
+# 默认推送 linux/amd64，适合大多数 Linux 服务器
 ./docker-deploy.sh push-image
 
 # 如需指定版本标签
 ./docker-deploy.sh push-image antake/xianyu-auto-reply:1.0
+
+# 如需同时推送 amd64 + arm64
+DOCKER_PLATFORMS=linux/amd64,linux/arm64 ./docker-deploy.sh push-image
 ```
 
 ```bash
@@ -195,12 +200,18 @@ docker-deploy.bat push-image
 REM 指定版本标签
 docker-deploy.bat push-image antake/xianyu-auto-reply:1.0
 
+REM 如需同时推送 amd64 + arm64
+set DOCKER_PLATFORMS=linux/amd64,linux/arm64 && docker-deploy.bat push-image
+
 REM 第二步：部署机拉取并启动
 docker-deploy.bat pull-start
 
 REM 拉取指定版本
 docker-deploy.bat pull-start antake/xianyu-auto-reply:1.0
 ```
+
+> 如果你之前已经推送过 `antake/xianyu-auto-reply:latest`，请重新执行一次 `push-image`。
+> 你这次报的 `no matching manifest for linux/amd64`，就是因为旧的 `latest` 里没有 `linux/amd64` 镜像。
 
 ### 方式二：本地源码运行
 
