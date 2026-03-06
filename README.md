@@ -158,64 +158,51 @@ xianyu-auto-reply/
 
 ## 🚀 快速开始
 
-**⚡ 最快部署方式（推荐）**：使用预构建镜像，无需下载源码，一条命令即可启动！
+**⚡ 推荐部署方式**：拆成两步，先推送到你自己的 Docker Hub，再到目标机器拉取启动。
 
-### 方式一：Docker 一键部署（最简单）
-
-```bash
-# 1. 创建数据目录
-mkdir -p xianyu-auto-reply
-
-# 2. 一键启动容器
-docker run -d \
-  -p 8080:8080 \
-  -v $PWD/xianyu-auto-reply/:/app/data/ \
-  --name xianyu-auto-reply \
-  registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0
-
-# 3. 访问系统
-# http://localhost:8080
-```
-
-**Windows用户**：
-```cmd
-# 创建数据目录
-mkdir xianyu-auto-reply
-
-# 启动容器
-docker run -d -p 8080:8080 -v %cd%/xianyu-auto-reply/:/app/data/ --name xianyu-auto-reply registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-auto-reply:1.0
-```
-
-### 方式二：从源码构建部署
+### 方式一：两步式 Docker 部署（Docker Hub: `antake`）
 
 ```bash
-# 1. 克隆项目
+# 第一步：在构建机推送到你的 Docker Hub
+git clone https://github.com/zhinianboke/xianyu-auto-reply.git
+cd xianyu-auto-reply
+docker login
+./docker-deploy.sh push-image
+
+# 如需指定版本标签
+./docker-deploy.sh push-image antake/xianyu-auto-reply:1.0
+```
+
+```bash
+# 第二步：在部署机拉取并启动
 git clone https://github.com/zhinianboke/xianyu-auto-reply.git
 cd xianyu-auto-reply
 
-# 2. 设置脚本执行权限（Linux/macOS）
-chmod +x docker-deploy.sh
+./docker-deploy.sh pull-start
 
-# 3. 一键部署（自动构建镜像）
-./docker-deploy.sh
-
-# 4. 访问系统
-# http://localhost:8080
+# 如需拉取指定版本
+./docker-deploy.sh pull-start antake/xianyu-auto-reply:1.0
 ```
 
 **Windows用户**：
 ```cmd
-# 使用Windows批处理脚本（推荐）
-docker-deploy.bat
+REM 第一步：推送到 Docker Hub
+git clone https://github.com/zhinianboke/xianyu-auto-reply.git
+cd xianyu-auto-reply
+docker login
+docker-deploy.bat push-image
 
-# 或者使用Git Bash/WSL
-bash docker-deploy.sh
+REM 指定版本标签
+docker-deploy.bat push-image antake/xianyu-auto-reply:1.0
 
-# 或者直接使用Docker Compose
-docker-compose up -d --build
+REM 第二步：部署机拉取并启动
+docker-deploy.bat pull-start
+
+REM 拉取指定版本
+docker-deploy.bat pull-start antake/xianyu-auto-reply:1.0
 ```
 
-### 方式三：本地开发部署
+### 方式二：本地源码运行
 
 ```bash
 # 1. 克隆项目
